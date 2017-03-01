@@ -356,9 +356,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, un
             if (opcode > OP_16 && ++nOpCount > MAX_OPS_PER_SCRIPT)
                 return set_error(serror, SCRIPT_ERR_OP_COUNT);
 
-            if (opcode == OP_LEFT ||
-                opcode == OP_RIGHT ||
-                opcode == OP_2MUL ||
+            if (opcode == OP_2MUL ||
                 opcode == OP_2DIV ||
                 opcode == OP_MUL ||
                 opcode == OP_DIV ||
@@ -779,6 +777,25 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, un
                     stack.pop_back(); // don't use popstack, this is mem neutral.
                 }
                 break;
+                case OP_LEFT:
+                case OP_RIGHT:
+                {
+                    if (stack.size() < 2)
+                        return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                    valtype size = stacktop(-1);
+                    popstack(stack, mlimit);
+                    if (opcode == OP_LEFT) {
+                        stack.push_back(vchZero);
+                        stack.push_back(size);
+                    } else {
+                        size_t total = stacktop(-1).size();
+                        stack.push_back(size);
+                        stack.push_back(CScriptNum(total - CScriptNum(size, fRequireMinimal).getint()).getvch());
+                    }
+                    mlimit.allocate_for(stacktop(-1));
+                    mlimit.allocate_for(stacktop(-2));
+                }
+                // no break, now run substr
                 case OP_SUBSTR:
                 {
                     if (stack.size() < 3)
