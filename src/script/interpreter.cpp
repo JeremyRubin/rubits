@@ -49,6 +49,10 @@ class MemoryLimiter {
         void allocate_for(const T& t);
     template <typename T>
         void restore(const T& t);
+    void restore(size_t s)
+    {
+        free_mem += s;
+    }
 
     bool set_error_if_not_ok(ScriptError * perror)
     {
@@ -352,8 +356,7 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, un
             if (opcode > OP_16 && ++nOpCount > MAX_OPS_PER_SCRIPT)
                 return set_error(serror, SCRIPT_ERR_OP_COUNT);
 
-            if (opcode == OP_SUBSTR ||
-                opcode == OP_LEFT ||
+            if (opcode == OP_LEFT ||
                 opcode == OP_RIGHT ||
                 opcode == OP_INVERT ||
                 opcode == OP_AND ||
@@ -778,6 +781,23 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, un
                     head.reserve(new_size);
                     head.insert(head.end(), tail.begin(), tail.end());
                     stack.pop_back(); // don't use popstack, this is mem neutral.
+                }
+                break;
+                case OP_SUBSTR:
+                {
+                    if (stack.size() < 3)
+                        return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                    int size = CScriptNum(stacktop(-1), fRequireMinimal).getint();
+                    int begin = CScriptNum(stacktop(-2), fRequireMinimal).getint();
+                    popstack(stack, mlimit);
+                    popstack(stack, mlimit);
+                    valtype& input = stacktop(-1);
+                    if (size < 0 || begin < 0 || size_t(begin) > input.size() || size_t(size) > input.size() || size_t(begin+size) > input.size())
+                        return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                    std::vector<unsigned char> output(input.data()+begin, input.data()+begin+size);
+                    swap(output, input);
+                    mlimit.restore(output);
+                    mlimit.allocate_for(stacktop(-1));
                 }
                 break;
                 case OP_TUCK:

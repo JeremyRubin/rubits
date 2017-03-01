@@ -819,8 +819,8 @@
 
 ["'a' 'b'", "CAT", "P2SH,STRICTENC", "OK", "CAT Enabled"],
 ["'a' 'b' 0", "IF CAT ELSE 1 ENDIF", "P2SH,STRICTENC", "OK", "CAT Enabled"],
-["'abc' 1 1", "SUBSTR", "P2SH,STRICTENC", "DISABLED_OPCODE", "SUBSTR disabled"],
-["'abc' 1 1 0", "IF SUBSTR ELSE 1 ENDIF", "P2SH,STRICTENC", "DISABLED_OPCODE", "SUBSTR disabled"],
+["'abc' 1 1", "SUBSTR", "P2SH,STRICTENC", "OK", "SUBSTR enabled"],
+["'abc' 1 1 0", "IF SUBSTR ELSE 1 ENDIF", "P2SH,STRICTENC", "OK", "SUBSTR enabled"],
 ["'abc' 2 0", "IF LEFT ELSE 1 ENDIF", "P2SH,STRICTENC", "DISABLED_OPCODE", "LEFT disabled"],
 ["'abc' 2 0", "IF RIGHT ELSE 1 ENDIF", "P2SH,STRICTENC", "DISABLED_OPCODE", "RIGHT disabled"],
 
