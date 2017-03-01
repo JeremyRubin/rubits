@@ -29,6 +29,8 @@ const char* ScriptErrorString(const ScriptError serror)
             return "Push value size limit exceeded";
         case SCRIPT_ERR_OP_COUNT:
             return "Operation limit exceeded";
+        case SCRIPT_ERR_EVAL_WEIGHT:
+            return "Operation exceeds memory limit";
         case SCRIPT_ERR_STACK_SIZE:
             return "Stack size limit exceeded";
         case SCRIPT_ERR_SIG_COUNT:

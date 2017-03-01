@@ -21,6 +21,12 @@
 // Maximum number of bytes pushable to the stack
 static const unsigned int MAX_SCRIPT_ELEMENT_SIZE = 520;
 
+// Max number of elements on the stack
+static const unsigned int MAX_SCRIPT_STACK_SIZE = 1000;
+
+// Max memory weight of an entire script evaluation context at any step
+static const unsigned int MAX_SCRIPT_EVAL_WEIGHT = MAX_SCRIPT_ELEMENT_SIZE * MAX_SCRIPT_STACK_SIZE;
+
 // Maximum number of non-push operations per script
 static const int MAX_OPS_PER_SCRIPT = 201;
 
