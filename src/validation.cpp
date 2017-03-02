@@ -58,6 +58,12 @@ CCriticalSection cs_main;
 
 BlockMap mapBlockIndex;
 CChain chainActive;
+struct startuphack {
+    startuphack() {
+        SetChainActive(&chainActive);
+    }
+};
+startuphack _setup_chainactive();
 CBlockIndex *pindexBestHeader = NULL;
 CWaitableCriticalSection csBestBlock;
 CConditionVariable cvBlockChange;

@@ -12,7 +12,7 @@
 #include "pubkey.h"
 #include "script/script.h"
 #include "uint256.h"
-#include <stdio.h>
+#include "chain.h"
 
 using namespace std;
 
@@ -489,9 +489,26 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, un
 
                     break;
                 }
+                case OP_GETBLOCKHASH:
+                {
+                    if (stack.size() < 1)
+                        return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                    const int nHeight = CScriptNum(stacktop(-1), fRequireMinimal).getint();
+                    popstack(stack, mlimit);
+                    const CChain* chain = GetConstChainActive();
+                    if (chain == NULL) return set_error(serror, SCRIPT_ERR_UNKNOWN_ERROR);
+                    const CBlockIndex * block = (*chain)[nHeight];
+                    if (block == NULL) return set_error(serror, SCRIPT_ERR_UNKNOWN_ERROR);
+                    uint256 hash = block->GetBlockHash();
+                    valtype stackhash(hash.begin(), hash.end());
+                    mlimit.allocate_for(stackhash);
+                    stack.push_back(stackhash);
 
-                case OP_NOP1: case OP_NOP4: case OP_NOP5:
-                case OP_NOP6: case OP_NOP7: case OP_NOP8: case OP_NOP9: case OP_NOP10:
+                }
+                break;
+
+                case OP_NOP1: case OP_NOP5: case OP_NOP6: case OP_NOP7:
+                case OP_NOP8: case OP_NOP9: case OP_NOP10:
                 {
                     if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
                         return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);

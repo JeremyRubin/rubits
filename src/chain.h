@@ -474,4 +474,7 @@ public:
     CBlockIndex* FindEarliestAtLeast(int64_t nTime) const;
 };
 
+static const CChain * pChainActive;
+const CChain* GetConstChainActive();
+void SetChainActive(const CChain*);
 #endif // BITCOIN_CHAIN_H

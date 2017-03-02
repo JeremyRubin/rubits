@@ -263,6 +263,8 @@ libbitcoin_consensus_a_SOURCES = \
   amount.h \
   arith_uint256.cpp \
   arith_uint256.h \
+  chain.h \
+  chain.cpp \
   consensus/merkle.cpp \
   consensus/merkle.h \
   consensus/params.h \

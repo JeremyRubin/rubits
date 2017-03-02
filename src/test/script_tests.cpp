@@ -14,7 +14,7 @@
 #include "utilstrencodings.h"
 #include "test/test_bitcoin.h"
 #include "rpc/server.h"
-
+#include "validation.h"
 #if defined(HAVE_CONSENSUS_LIB)
 #include "script/bitcoinconsensus.h"
 #endif
@@ -1442,5 +1442,41 @@ BOOST_AUTO_TEST_CASE(script_FindAndDelete)
     BOOST_CHECK_EQUAL(s.FindAndDelete(d), 1);
     BOOST_CHECK(s == expect);
 }
+
+
+
+
+
+void test_getblockhash(int getblock, int haveblock, bool succeeds, ScriptError expected)
+{
+    ScriptError err;
+    CScript scriptPubKey;
+    CScript empty;
+    uint256 hash = chainActive[haveblock]->GetBlockHash();
+    scriptPubKey << CScriptNum(getblock) << OP_GETBLOCKHASH << ToByteVector(hash) << OP_EQUAL;
+    CMutableTransaction txFrom = BuildCreditingTransaction(scriptPubKey);
+    CMutableTransaction txTo = BuildSpendingTransaction(CScript(), CScriptWitness(), txFrom);
+    BOOST_CHECK_EQUAL(succeeds, VerifyScript(empty, scriptPubKey, NULL, flags,
+                MutableTransactionSignatureChecker(&txTo, 0, txFrom.vout[0].nValue), &err));
+    BOOST_CHECK_MESSAGE(err == expected, ScriptErrorString(err));
+}
+
+
+
+BOOST_FIXTURE_TEST_CASE(script_GETBLOCKHASH, TestChain100Setup)
+{
+    SetChainActive(&chainActive);
+    BOOST_CHECK(GetConstChainActive());
+    test_getblockhash(0, 0, true, SCRIPT_ERR_OK);
+    test_getblockhash(100, 100, true, SCRIPT_ERR_OK);
+    test_getblockhash(50, 50, true, SCRIPT_ERR_OK);
+    test_getblockhash(51, 50, false, SCRIPT_ERR_EVAL_FALSE);
+    test_getblockhash(50, 51, false, SCRIPT_ERR_EVAL_FALSE);
+    test_getblockhash(101, 90, false, SCRIPT_ERR_UNKNOWN_ERROR);
+    test_getblockhash(-1, 90, false, SCRIPT_ERR_UNKNOWN_ERROR);
+}
+
+
+
 
 BOOST_AUTO_TEST_SUITE_END()
