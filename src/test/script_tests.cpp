@@ -1477,6 +1477,88 @@ BOOST_FIXTURE_TEST_CASE(script_GETBLOCKHASH, TestChain100Setup)
 }
 
 
+std::vector<unsigned char> SerializeOutPoint(const COutPoint& x){
+    std::vector<unsigned char> d(x.hash.begin(), x.hash.end());
+    std::vector<unsigned char> n = CScriptNum::serialize(x.n);
+    d.insert(d.end(), n.begin(), n.end());
+    return d;
+}
+void test_getinput(int nout, ScriptError expected)
+{
+    ScriptError err;
+    CScript empty;
+
+    CMutableTransaction txCredit;
+    txCredit.nVersion = 1;
+    txCredit.nLockTime = 0;
+    txCredit.vin.resize(1);
+    txCredit.vin[0].prevout.SetNull();
+    txCredit.vin[0].scriptSig = CScript() << CScriptNum(0) << CScriptNum(0);
+    txCredit.vin[0].nSequence = CTxIn::SEQUENCE_FINAL;
+    txCredit.vout.resize(nout);
+    for (int i = 0; i < nout; ++i) {
+        txCredit.vout[i].scriptPubKey ;
+        txCredit.vout[i].nValue = 0;
+    }
+
+    CMutableTransaction txSpend;
+    txSpend.nVersion = 1;
+    txSpend.nLockTime = 0;
+    txSpend.vin.resize(nout);
+    txSpend.vout.resize(1);
+    for (int i = 0; i < nout; ++i) {
+        txSpend.vin[i].scriptWitness ;
+        txSpend.vin[i].prevout.hash = txCredit.GetHash();
+        txSpend.vin[i].prevout.n = i;
+        txSpend.vin[i].scriptSig;
+        txSpend.vin[i].nSequence = CTxIn::SEQUENCE_FINAL;
+    }
+    txSpend.vout[0].scriptPubKey = CScript();
+    txSpend.vout[0].nValue = 0;
+
+
+    int i = 0;
+    for (auto& x : txCredit.vout) {
+        CScript scriptPubKey;
+        scriptPubKey << CScriptNum::serialize((++i) % nout) << OP_GETINPUT << OP_EQUAL;
+        CScript scriptSig;
+        scriptSig << SerializeOutPoint(COutPoint(txCredit.GetHash(), (i) % nout));
+        BOOST_CHECK(VerifyScript( scriptSig,
+                    scriptPubKey, NULL, flags,
+                    MutableTransactionSignatureChecker(&txSpend, nout, 0), &err));
+        BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+    }
+
+    i = 0;
+    for (auto& x : txCredit.vout) {
+        CScript scriptPubKey;
+        scriptPubKey << CScriptNum::serialize((++i) % nout) << OP_GETINPUT << OP_EQUAL;
+        CScript scriptSig;
+        scriptSig << SerializeOutPoint(COutPoint(txCredit.GetHash(), (i+1) % nout));
+        BOOST_CHECK(!VerifyScript(scriptSig,
+                    scriptPubKey, NULL, flags,
+                    MutableTransactionSignatureChecker(&txSpend, nout, 0), &err));
+        BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_EVAL_FALSE, ScriptErrorString(err));
+    }
+
+    {
+        CScript scriptPubKey;
+        scriptPubKey << CScriptNum::serialize(nout) << OP_GETINPUT << OP_EQUAL;
+        CScript scriptSig;
+        scriptSig << OP_0;
+        BOOST_CHECK(VerifyScript(scriptSig,
+                    scriptPubKey, NULL, flags,
+                    MutableTransactionSignatureChecker(&txSpend, nout, 0), &err));
+        BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+    }
+}
+
+
+
+BOOST_FIXTURE_TEST_CASE(script_GETINPUT, TestChain100Setup)
+{
+    test_getinput(0,  SCRIPT_ERR_OK);
+}
 
 
 BOOST_AUTO_TEST_SUITE_END()

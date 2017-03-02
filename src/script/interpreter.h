@@ -143,6 +143,11 @@ public:
          return false;
     }
 
+    virtual const COutPoint* GetOutPoint(int index) const
+    {
+        return nullptr;
+    }
+
     virtual ~BaseSignatureChecker() {}
 };
 
@@ -163,6 +168,13 @@ public:
     bool CheckSig(const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const;
     bool CheckLockTime(const CScriptNum& nLockTime) const;
     bool CheckSequence(const CScriptNum& nSequence) const;
+    const COutPoint* GetOutPoint(int index) const
+    {
+        if (index < txTo->vin.size() && index >= 0)
+            return &txTo->vin[index].prevout;
+        else
+            return nullptr;
+    }
 };
 
 class MutableTransactionSignatureChecker : public TransactionSignatureChecker

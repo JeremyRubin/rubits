@@ -503,11 +503,30 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, un
                     valtype stackhash(hash.begin(), hash.end());
                     mlimit.allocate_for(stackhash);
                     stack.push_back(stackhash);
+                }
+                break;
+                case OP_GETINPUT:
+                {
+                    if (stack.size() < 1)
+                        return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                    const int index = CScriptNum(stacktop(-1), fRequireMinimal).getint();
+                    popstack(stack, mlimit);
+                    const COutPoint* input = checker.GetOutPoint(index);
+                    if (input) {
+                        std::vector<unsigned char> d(input->hash.begin(), input->hash.end());
+                        std::vector<unsigned char> n = CScriptNum::serialize(input->n);
+                        d.insert(d.end(), n.begin(), n.end());
+                        mlimit.allocate_for(d);
+                        stack.push_back(d);
+                    } else {
+                        mlimit.allocate_for(vchZero);
+                        stack.push_back(vchZero);
+                    }
 
                 }
                 break;
 
-                case OP_NOP1: case OP_NOP5: case OP_NOP6: case OP_NOP7:
+                case OP_NOP1:  case OP_NOP6: case OP_NOP7:
                 case OP_NOP8: case OP_NOP9: case OP_NOP10:
                 {
                     if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
