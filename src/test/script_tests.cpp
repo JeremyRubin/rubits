@@ -1508,7 +1508,8 @@ void test_getinput(int nout, ScriptError expected)
     txSpend.nLockTime = 0;
     txSpend.vin.resize(nout);
     for (int i = 0; i < nout; ++i) {
-        txSpend.vin[i].scriptWitness << OP_0;
+        txSpend.vin[i].scriptWitness.stack.resize(1);
+        txSpend.vin[i].scriptWitness.stack[0] = CScriptNum(0).getvch();
         txSpend.vin[i].prevout.hash = txCredit.GetHash();
         txSpend.vin[i].prevout.n = i;
         txSpend.vin[i].scriptSig << SerializeOutPoint(COutPoint(txCredit.GetHash(), (i+1) % nout));
@@ -1527,14 +1528,24 @@ void test_getinput(int nout, ScriptError expected)
         BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
     }
 
+    // Test a case where a different txid is expected
     for (int i = 0; i < nout; ++i) {
-        txSpend.vin[i].scriptSig = CScript() << SerializeOutPoint(COutPoint(uint256(),(i+1) % nout));
+        txSpend.vin[i].scriptSig = CScript() << SerializeOutPoint(COutPoint(GetRandHash(),(i+1) % nout));
+        BOOST_CHECK(!VerifyScript(txSpend.vin[i].scriptSig,
+                    txCredit.vout[i].scriptPubKey, NULL, flags,
+                    MutableTransactionSignatureChecker(&txSpend, nout, 0), &err));
+        BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_EVAL_FALSE, ScriptErrorString(err));
+    }
+    // Test a case where a different outpoint is expected
+    for (int i = 0; i < nout; ++i) {
+        txSpend.vin[i].scriptSig = CScript() << SerializeOutPoint(COutPoint(txCredit.GetHash(), nout));
         BOOST_CHECK(!VerifyScript(txSpend.vin[i].scriptSig,
                     txCredit.vout[i].scriptPubKey, NULL, flags,
                     MutableTransactionSignatureChecker(&txSpend, nout, 0), &err));
         BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_EVAL_FALSE, ScriptErrorString(err));
     }
 
+    // Test out of bounds index gets null vector
     {
         CScript scriptPubKey;
         scriptPubKey << CScriptNum::serialize(nout) << OP_GETINPUT << OP_EQUAL;
