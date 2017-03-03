@@ -525,8 +525,42 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, un
 
                 }
                 break;
+                case OP_CHECKSIGFROMSTACK:
+                {
+                    //    -3    -2     -1
+                    // x sig x data x pubkey
+                    if (stack.size() < 3)
+                        return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
 
-                case OP_NOP1:  case OP_NOP6: case OP_NOP7:
+                    valtype& vchSig    = stacktop(-3);
+                    valtype vchData    = stacktop(-2);
+                    valtype& vchPubKey = stacktop(-1);
+                    if (vchData.size() > sizeof(uint256))
+                        return set_error(serror, SCRIPT_ERR_UNKNOWN_ERROR);
+                    bool wasNull = vchData.size() == 0;
+                    vchData.resize(sizeof(uint256));
+
+                    vchSig.push_back(SIGHASH_NONE);
+                    if (!CheckSignatureEncoding(vchSig, flags, serror) || !CheckPubKeyEncoding(vchPubKey, flags, sigversion, serror)) {
+                        //serror is set
+                        return false;
+                    }
+                    vchSig.pop_back();
+                    CPubKey pubkey(vchPubKey);
+                    if (!pubkey.IsValid())
+                        return  set_error(serror, SCRIPT_ERR_UNKNOWN_ERROR);
+                    bool fSuccess = checker.VerifySignature(vchSig, pubkey, uint256(vchData));
+                    if (!fSuccess && (flags & SCRIPT_VERIFY_NULLFAIL) && !wasNull)
+                        return set_error(serror, SCRIPT_ERR_SIG_NULLFAIL);
+
+                    popstack(stack, mlimit);
+                    popstack(stack, mlimit);
+                    popstack(stack, mlimit);
+                    mlimit.allocate_for(fSuccess ? vchTrue : vchFalse);
+                    stack.push_back(fSuccess ? vchTrue : vchFalse);
+                }
+                break;
+                case OP_NOP1: case OP_NOP7:
                 case OP_NOP8: case OP_NOP9: case OP_NOP10:
                 {
                     if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)

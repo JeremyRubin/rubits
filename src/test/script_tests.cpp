@@ -10,6 +10,7 @@
 #include "script/script.h"
 #include "script/script_error.h"
 #include "script/sign.h"
+#include "random.h"
 #include "util.h"
 #include "utilstrencodings.h"
 #include "test/test_bitcoin.h"
@@ -1564,6 +1565,76 @@ BOOST_FIXTURE_TEST_CASE(script_GETINPUT, TestChain100Setup)
 {
     test_getinput(1,  SCRIPT_ERR_OK);
     test_getinput(10,  SCRIPT_ERR_OK);
+}
+
+BOOST_AUTO_TEST_CASE(test_getchecksigfromstack)
+{
+    CKey key;
+    key.MakeNewKey(0);
+    CPubKey pubkey  = key.GetPubKey();
+    uint256 signedval = GetRandHash();
+    std::vector<unsigned char> signature;
+    BOOST_CHECK(key.Sign(signedval, signature));
+    BOOST_CHECK(pubkey.Verify(signedval, signature));
+
+    ScriptError err;
+    CMutableTransaction txFrom = BuildCreditingTransaction(CScript());
+    CMutableTransaction txTo = BuildSpendingTransaction(CScript(), CScriptWitness(), txFrom);
+    // Test valid signature succeeds
+    {
+        txFrom.vout[0].scriptPubKey << ToByteVector(pubkey) << OP_CHECKSIGFROMSTACK;
+        txTo.vin[0].scriptSig = CScript() << signature << ToByteVector(signedval);
+        BOOST_CHECK(VerifyScript(txTo.vin[0].scriptSig,
+                    txFrom.vout[0].scriptPubKey, NULL, flags,
+                    MutableTransactionSignatureChecker(&txFrom, 1, 0), &err));
+        BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+    }
+
+    // Test wrong key fails
+    {
+        CKey key2;
+        key2.MakeNewKey(0);
+        CPubKey pubkey2  = key2.GetPubKey();
+        txFrom.vout[0].scriptPubKey = CScript() << ToByteVector(pubkey2) << OP_CHECKSIGFROMSTACK;
+        BOOST_CHECK(!VerifyScript(txTo.vin[0].scriptSig,
+                    txFrom.vout[0].scriptPubKey, NULL, flags | SCRIPT_VERIFY_NULLFAIL,
+                    MutableTransactionSignatureChecker(&txFrom, 1, 0), &err));
+        BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_SIG_NULLFAIL, ScriptErrorString(err));
+        // Cleanup
+        txFrom.vout[0].scriptPubKey = CScript() << ToByteVector(pubkey) << OP_CHECKSIGFROMSTACK;
+    }
+
+    // Test Messed up signature fails
+    {
+        std::vector<unsigned char> signature2;
+        BOOST_CHECK(key.Sign(GetRandHash(), signature2));
+        txTo.vin[0].scriptSig = CScript() << signature2 << ToByteVector(signedval);
+        BOOST_CHECK(!VerifyScript(txTo.vin[0].scriptSig,
+                    txFrom.vout[0].scriptPubKey, NULL, flags | SCRIPT_VERIFY_NULLFAIL,
+                    MutableTransactionSignatureChecker(&txFrom, 1, 0), &err));
+        BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_SIG_NULLFAIL, ScriptErrorString(err));
+    }
+
+    // Test Messed up signedval fails
+    {
+        uint256 signedval2 = GetRandHash();
+        txTo.vin[0].scriptSig = CScript() << signature << ToByteVector(signedval2);
+        BOOST_CHECK(!VerifyScript(txTo.vin[0].scriptSig,
+                    txFrom.vout[0].scriptPubKey, NULL, flags | SCRIPT_VERIFY_NULLFAIL,
+                    MutableTransactionSignatureChecker(&txFrom, 1, 0), &err));
+        BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_SIG_NULLFAIL, ScriptErrorString(err));
+    }
+
+    // Test NULLFAIL
+    {
+        std::vector<unsigned char> signature2;
+        txFrom.vout[0].scriptPubKey = OP_NOT;
+        txTo.vin[0].scriptSig = CScript() << signature2 << ToByteVector(signedval);
+        BOOST_CHECK(VerifyScript(txTo.vin[0].scriptSig,
+                    txFrom.vout[0].scriptPubKey, NULL, flags | SCRIPT_VERIFY_NULLFAIL,
+                    MutableTransactionSignatureChecker(&txFrom, 1, 0), &err));
+        BOOST_CHECK_MESSAGE(err == SCRIPT_ERR_OK, ScriptErrorString(err));
+    }
 }
 
 
