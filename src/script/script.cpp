@@ -136,7 +136,7 @@ const char* GetOpName(opcodetype opcode)
     case OP_GETBLOCKHASH           : return "OP_GETBLOCKHASH";
     case OP_GETINPUT               : return "OP_GETINPUT";
     case OP_CHECKSIGFROMSTACK      : return "OP_CHECKSIGFROMSTACK";
-    case OP_NOP7                   : return "OP_NOP7";
+    case OP_UTXOEXISTS             : return "OP_UTXOEXISTS";
     case OP_NOP8                   : return "OP_NOP8";
     case OP_NOP9                   : return "OP_NOP9";
     case OP_NOP10                  : return "OP_NOP10";

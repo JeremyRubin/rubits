@@ -13,6 +13,7 @@
 #include "script/script.h"
 #include "uint256.h"
 #include "chain.h"
+#include "coins.h"
 
 using namespace std;
 
@@ -560,7 +561,30 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, un
                     stack.push_back(fSuccess ? vchTrue : vchFalse);
                 }
                 break;
-                case OP_NOP1: case OP_NOP7:
+
+                case OP_UTXOEXISTS:
+                {
+                    if (stack.size() < 1)
+                        return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                    if (stacktop(-1).size() < sizeof(uint256))
+                        return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                    const unsigned char * data = stacktop(-1).data();
+                    const uint256 hash(std::vector<unsigned char>(data, data+sizeof(uint256)));
+                    std::vector<unsigned char> vchNum(data+sizeof(uint256), data+stacktop(-1).size());
+                    popstack(stack, mlimit);
+                    if (vchNum.size() > 4)
+                        return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+                    vchNum.resize(4);
+                    uint32_t num = vchNum[0] | vchNum[1]<<8 | vchNum[2]<<16 | vchNum[3]<<24;
+
+                    const COutPoint outpoint(hash, num);
+                    bool res = (*ScriptInputLookup::Get())(outpoint, checker.GetSequenceInBlock());
+                    mlimit.allocate_for(res ? vchTrue : vchFalse);
+                    stack.push_back(res ? vchTrue : vchFalse);
+                    break;
+                }
+                break;
+                case OP_NOP1:
                 case OP_NOP8: case OP_NOP9: case OP_NOP10:
                 {
                     if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS)
@@ -1811,4 +1835,25 @@ size_t CountWitnessSigOps(const CScript& scriptSig, const CScript& scriptPubKey,
     }
 
     return 0;
+}
+
+
+
+
+
+std::mutex ScriptInputLookup::m;
+static bool defaultLookup(const COutPoint& x, uint32_t time) {
+    return false;
+}
+static InputLookupFn defaultLookupFn {defaultLookup};
+const InputLookupFn* ScriptInputLookup::pInputLookup = &defaultLookupFn;
+
+const InputLookupFn* ScriptInputLookup::Get() {
+    return pInputLookup;
+}
+ScriptInputLookup::ScriptInputLookup(const InputLookupFn* p) : l(m) {
+    pInputLookup = p;
+}
+ScriptInputLookup::~ScriptInputLookup() {
+    pInputLookup = &defaultLookupFn;
 }

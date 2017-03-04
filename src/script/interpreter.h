@@ -152,6 +152,11 @@ public:
         return nullptr;
     }
 
+    virtual uint32_t GetSequenceInBlock() const
+    {
+        return 0;
+    }
+
     virtual ~BaseSignatureChecker() {}
 };
 
@@ -162,11 +167,12 @@ private:
     unsigned int nIn;
     const CAmount amount;
     const PrecomputedTransactionData* txdata;
+    uint32_t sequenceInBlock;
 
 public:
     virtual bool VerifySignature(const std::vector<unsigned char>& vchSig, const CPubKey& vchPubKey, const uint256& sighash) const;
-    TransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn) : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(NULL) {}
-    TransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, const PrecomputedTransactionData& txdataIn) : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn) {}
+    TransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn) : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(NULL), sequenceInBlock(0) {}
+    TransactionSignatureChecker(const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, const PrecomputedTransactionData& txdataIn, uint32_t sequenceInBlockIn) : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn), sequenceInBlock(sequenceInBlockIn) {}
     bool CheckSig(const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const;
     bool CheckRawSig(const uint256& data, const std::vector<unsigned char>& scriptSig, const std::vector<unsigned char>& vchPubKey, SigVersion sigversion) const;
     bool CheckLockTime(const CScriptNum& nLockTime) const;
@@ -177,6 +183,10 @@ public:
             return &txTo->vin[index].prevout;
         else
             return nullptr;
+    }
+    uint32_t GetSequenceInBlock() const
+    {
+        return sequenceInBlock;
     }
 };
 
@@ -194,4 +204,14 @@ bool VerifyScript(const CScript& scriptSig, const CScript& scriptPubKey, const C
 
 size_t CountWitnessSigOps(const CScript& scriptSig, const CScript& scriptPubKey, const CScriptWitness* witness, unsigned int flags);
 
+typedef std::function<bool(const COutPoint& x, uint32_t time)> InputLookupFn;
+class ScriptInputLookup {
+    static std::mutex m;
+    static const InputLookupFn* pInputLookup;
+    std::unique_lock<std::mutex> l;
+    public:
+    static const InputLookupFn* Get();
+    ScriptInputLookup(const InputLookupFn*);
+    ~ScriptInputLookup();
+};
 #endif // BITCOIN_SCRIPT_INTERPRETER_H

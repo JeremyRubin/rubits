@@ -38,6 +38,7 @@
 
 #include <atomic>
 #include <sstream>
+#include <unordered_map>
 
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/join.hpp>
@@ -955,13 +956,13 @@ bool AcceptToMemoryPoolWorker(CTxMemPool& pool, CValidationState& state, const C
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
         PrecomputedTransactionData txdata(tx);
-        if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, txdata)) {
+        if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, txdata, 0)) {
             // SCRIPT_VERIFY_CLEANSTACK requires SCRIPT_VERIFY_WITNESS, so we
             // need to turn both off, and compare against just turning off CLEANSTACK
             // to see if the failure is specifically due to witness validation.
             CValidationState stateDummy; // Want reported failures to be from first CheckInputs
-            if (!tx.HasWitness() && CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~(SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_CLEANSTACK), true, txdata) &&
-                !CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~SCRIPT_VERIFY_CLEANSTACK, true, txdata)) {
+            if (!tx.HasWitness() && CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~(SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_CLEANSTACK), true, txdata, 0) &&
+                !CheckInputs(tx, stateDummy, view, true, scriptVerifyFlags & ~SCRIPT_VERIFY_CLEANSTACK, true, txdata, 0)) {
                 // Only the witness is missing, so the transaction itself may be fine.
                 state.SetCorruptionPossible();
             }
@@ -977,7 +978,7 @@ bool AcceptToMemoryPoolWorker(CTxMemPool& pool, CValidationState& state, const C
         // There is a similar check in CreateNewBlock() to prevent creating
         // invalid blocks, however allowing such transactions into the mempool
         // can be exploited as a DoS attack.
-        if (!CheckInputs(tx, state, view, true, MANDATORY_SCRIPT_VERIFY_FLAGS, true, txdata))
+        if (!CheckInputs(tx, state, view, true, MANDATORY_SCRIPT_VERIFY_FLAGS, true, txdata, 0))
         {
             return error("%s: BUG! PLEASE REPORT THIS! ConnectInputs failed against MANDATORY but not STANDARD flags %s, %s",
                 __func__, hash.ToString(), FormatStateMessage(state));
@@ -1361,7 +1362,7 @@ void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, int nHeight)
 bool CScriptCheck::operator()() {
     const CScript &scriptSig = ptxTo->vin[nIn].scriptSig;
     const CScriptWitness *witness = &ptxTo->vin[nIn].scriptWitness;
-    if (!VerifyScript(scriptSig, scriptPubKey, witness, nFlags, CachingTransactionSignatureChecker(ptxTo, nIn, amount, cacheStore, *txdata), &error)) {
+    if (!VerifyScript(scriptSig, scriptPubKey, witness, nFlags, CachingTransactionSignatureChecker(ptxTo, nIn, amount, cacheStore, *txdata, sequenceInBlock), &error)) {
         return false;
     }
     return true;
@@ -1420,7 +1421,7 @@ bool CheckTxInputs(const CTransaction& tx, CValidationState& state, const CCoins
 }
 }// namespace Consensus
 
-bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, unsigned int flags, bool cacheStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks)
+bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsViewCache &inputs, bool fScriptChecks, unsigned int flags, bool cacheStore, PrecomputedTransactionData& txdata, uint32_t sequenceInBlock, std::vector<CScriptCheck> *pvChecks)
 {
     if (!tx.IsCoinBase())
     {
@@ -1446,7 +1447,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                 assert(coins);
 
                 // Verify signature
-                CScriptCheck check(*coins, tx, i, flags, cacheStore, &txdata);
+                CScriptCheck check(*coins, tx, i, flags, cacheStore, &txdata, sequenceInBlock);
                 if (pvChecks) {
                     pvChecks->push_back(CScriptCheck());
                     check.swap(pvChecks->back());
@@ -1459,7 +1460,7 @@ bool CheckInputs(const CTransaction& tx, CValidationState &state, const CCoinsVi
                         // avoid splitting the network between upgraded and
                         // non-upgraded nodes.
                         CScriptCheck check2(*coins, tx, i,
-                                flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS, cacheStore, &txdata);
+                                flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS, cacheStore, &txdata, sequenceInBlock);
                         if (check2())
                             return state.Invalid(false, REJECT_NONSTANDARD, strprintf("non-mandatory-script-verify-flag (%s)", ScriptErrorString(check.GetScriptError())));
                     }
@@ -1862,8 +1863,73 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
 
     CBlockUndo blockundo;
 
-    CCheckQueueControl<CScriptCheck> control(fScriptChecks && nScriptCheckThreads ? &scriptcheckqueue : NULL);
+    // Map a txid -> it's creation time (serially, in the block or Before) + the
+    // number created
+    std::unordered_map<uint256, std::pair<uint32_t, uint32_t>, SaltedTxidHasher> create_map;
+    // For inputs that existed before the block, map each one to it's spend
+    // index only
+    std::unordered_map<uint256, std::unordered_map<uint32_t, uint32_t>, SaltedTxidHasher> spend_map;
+    create_map.reserve(block.vtx.size());
+    spend_map.reserve(block.vtx.size()*2);
+    {
+        uint32_t sequence = 0;
+        for (const auto& tx : block.vtx) {
+            uint256 txid = tx->GetHash();
+            create_map[txid].first = sequence;
+            create_map[txid].second = tx->vout.size();
+            for (auto& vin : tx->vin) {
+                const CCoins* coins = view.AccessCoins(vin.prevout.hash);
+                if (coins && !coins->IsAvailable(vin.prevout.n)) {
+                    spend_map[vin.prevout.hash][vin.prevout.n] = sequence;
+                } else {
+                    // Check if we created it locally
+                    auto x = create_map.find(vin.prevout.hash);
+                    if (x != create_map.end() && vin.prevout.n < x->second.second)
+                        spend_map[vin.prevout.hash][vin.prevout.n] = sequence;
+                }
+                // Otherwise, we should get it from the CCoinsViewCache at runtime. Note, for correctness, we must check
+                // outpointInterval source first (as the block can evaluate scriptchecks out of order).
+            }
+            ++sequence;
+        }
+    }
+    // No-One will write to outpointInterval after this point so it is safe to
+    // access without a lock.
+    //
+    // However, view is not, so we need a shared_mutex to access it
+    boost::shared_mutex viewMutex;
+    InputLookupFn inputlookup = [&](const COutPoint& x, uint32_t time) {
+        // First check if there exists a spend of the coin
+        // If there is a spend, that implies the coins existence is checked
+        // elsewhere so we only care to see that we are checking before it is
+        // spent
+        {
+            auto it = spend_map.find(x.hash);
+            if (it != spend_map.end()) {
+                auto it2 = it->second.find(x.n);
+                return it2 != it->second.end() && time < it2->second;
+            }
+        }
+        // The next two tests could come in either order.
 
+        // Second, Check if it was created recently
+        {
+            auto it = create_map.find(x.hash);
+            if (it != create_map.end()) {
+                return time >= it->second.first && x.n < it->second.second;
+            }
+        }
+        // Third, check the CCoinsView for answers. Entries not caught by the
+        // first check are race condition safe for at least being present here
+        {
+            boost::shared_lock<boost::shared_mutex> readlock(viewMutex);
+            const CCoins* coins = view.AccessCoins(x.hash);
+            return coins && coins->IsAvailable(x.n);
+        }
+    };
+    ScriptInputLookup scriptInputLookup(&inputlookup);
+    boost::shared_lock<boost::shared_mutex> l(viewMutex); // no harm in holding this
+    CCheckQueueControl<CScriptCheck> control(fScriptChecks && nScriptCheckThreads ? &scriptcheckqueue : NULL);
     std::vector<int> prevheights;
     CAmount nFees = 0;
     int nInputs = 0;
@@ -1916,7 +1982,7 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
 
             std::vector<CScriptCheck> vChecks;
             bool fCacheResults = fJustCheck; /* Don't cache results if we're actually connecting blocks (still consult the cache, though) */
-            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, txdata[i], nScriptCheckThreads ? &vChecks : NULL))
+            if (!CheckInputs(tx, state, view, fScriptChecks, flags, fCacheResults, txdata[i], i, nScriptCheckThreads ? &vChecks : NULL))
                 return error("ConnectBlock(): CheckInputs on %s failed with %s",
                     tx.GetHash().ToString(), FormatStateMessage(state));
             control.Add(vChecks);
@@ -1926,7 +1992,12 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
         if (i > 0) {
             blockundo.vtxundo.push_back(CTxUndo());
         }
-        UpdateCoins(tx, view, i == 0 ? undoDummy : blockundo.vtxundo.back(), pindex->nHeight);
+        l.unlock();
+        {
+            boost::unique_lock<boost::shared_mutex> l2(viewMutex);
+            UpdateCoins(tx, view, i == 0 ? undoDummy : blockundo.vtxundo.back(), pindex->nHeight);
+        }
+        l.lock();
 
         vPos.push_back(std::make_pair(tx.GetHash(), pos));
         pos.nTxOffset += ::GetSerializeSize(tx, SER_DISK, CLIENT_VERSION);
