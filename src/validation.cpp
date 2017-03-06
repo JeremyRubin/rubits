@@ -953,6 +953,18 @@ bool AcceptToMemoryPoolWorker(CTxMemPool& pool, CValidationState& state, const C
             scriptVerifyFlags = GetArg("-promiscuousmempoolflags", scriptVerifyFlags);
         }
 
+        // Set Input Lookup Function
+        // Only allow for coins which are in a block, as we don't currently
+        // set ancestors properly
+        //
+        // This means that without further extension, nodes will not by default
+        // create blocks which have to lookup a concurrently mined txn, even though
+        // it is safe to do so
+        InputLookupFn inputlookup = [&](const COutPoint& x, uint32_t time) {
+                const CCoins* coins = view.AccessCoins(x.hash);
+                return coins && coins->IsAvailable(x.n);
+        };
+        ScriptInputLookup scriptInputLookup(&inputlookup);
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
         PrecomputedTransactionData txdata(tx);
