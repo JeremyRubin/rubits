@@ -1637,5 +1637,198 @@ BOOST_AUTO_TEST_CASE(test_getchecksigfromstack)
     }
 }
 
+BOOST_FIXTURE_TEST_CASE(script_UTXOEXISTS, TestChain100Setup)
+{
+
+    // CONFIRM is a helper to get a confirmation on a txn
+    // and check that the block was actually accepted
+    auto CONFIRM = [&](std::vector<CMutableTransaction>&& txns){
+        CScript scriptPubKey = CScript();
+        CBlock block = CreateAndProcessBlock(txns, scriptPubKey);
+        BOOST_REQUIRE(block.GetBlockHeader().GetHash() == chainActive.Tip()->GetBlockHeader().GetHash());
+        return block;
+    };
+
+    // Mine one block to source coins from.
+    CBlock sourceBlock = CONFIRM(std::vector<CMutableTransaction>());
+    const CTransaction txSpend = *sourceBlock.vtx[0];
+    CBlock sourceBlock2 = CONFIRM(std::vector<CMutableTransaction>());
+    const CTransaction txFrom = *sourceBlock2.vtx[0];
+
+    // Enable segwit
+    for (auto x = 0; x< 144*3; ++x) // segwit should be active?
+        CONFIRM(std::vector<CMutableTransaction>());
+
+    // A helper to make a bunch of outputs
+    const size_t N_OUTPUTS_NEEDED = 100;
+    CTransactionRef n;
+    {
+        CMutableTransaction m_n;
+        m_n.vin.resize(1);
+        m_n.vin[0].prevout = COutPoint(txSpend.GetHash(), 0);
+        // This is how many outputs we're creating for testing. We create one
+        // extra that won't be spent so that we can always assume
+        // m_n.vout[N_OUTPUTS_NEEDED] exists.
+        m_n.vout.resize(N_OUTPUTS_NEEDED + 1);
+        m_n.nVersion = 2;
+        m_n.nLockTime = 0;
+        m_n.vin[0].scriptWitness = CScriptWitness();
+        m_n.vin[0].scriptSig = CScript() << OP_TRUE;
+        m_n.vin[0].nSequence = CTxIn::SEQUENCE_FINAL;
+        for (auto& v : m_n.vout) {
+            v.scriptPubKey = CScript();
+            v.nValue = txSpend.vout[0].nValue / m_n.vout.size();
+        }
+        n = MakeTransactionRef(CTransaction(m_n));
+        CONFIRM(std::vector<CMutableTransaction>({m_n}));
+    }
+
+    size_t counter = 0;
+    auto GetBoring = [&](){
+        CMutableTransaction m;
+        m.vin.resize(1);
+        m.vout.resize(1);
+        m.nVersion = 2;
+        m.nLockTime = 0;
+        m.vin[0].nSequence = CTxIn::SEQUENCE_FINAL;
+        // Don't make an invalid one here
+        BOOST_REQUIRE(counter < N_OUTPUTS_NEEDED);
+        m.vin[0].prevout = COutPoint(n->GetHash(), counter++);
+        m.vin[0].scriptWitness = CScriptWitness();
+        m.vin[0].scriptSig = CScript() << OP_TRUE;
+        // We want boring to be unspendable unless overridden.
+        m.vout[0].scriptPubKey = CScript() << OP_RETURN;
+        m.vout[0].nValue = 0;
+        return m;
+    };
+
+    {
+        BOOST_TEST_MESSAGE("Case 0: Script checks for UTXO which exists in "
+                "prior block (TRUE)");
+        auto case0 = GetBoring();
+        auto exists = GetBoring();
+        auto vch = ToByteVector(txFrom.GetHash());
+        case0.vin[0].scriptSig = CScript() << vch << OP_UTXOEXISTS;
+        CONFIRM(std::vector<CMutableTransaction>({case0}));
+    }
+
+    {
+        BOOST_TEST_MESSAGE("Case 1: Script checks for UTXO which never existed "
+                "in any block (FALSE)");
+        auto case1 = GetBoring();
+        case1.vin[0].scriptSig = CScript() << ToByteVector(GetRandHash()) << OP_UTXOEXISTS << OP_NOT;
+        CONFIRM(std::vector<CMutableTransaction>({case1}));
+    }
+
+    {
+        BOOST_TEST_MESSAGE("Case 2: Script checks existence of UTXO in self "
+                "transaction (can do because of SEGWIT) (TRUE)");
+        auto witnessScript = CScript() << OP_UTXOEXISTS;
+        std::vector<unsigned char> vchWit(witnessScript.begin(), witnessScript.end());
+        uint256 hash;
+        CSHA256().Write(&witnessScript[0], witnessScript.size()).Finalize(hash.begin());
+        auto case2A = GetBoring();
+        case2A.vout[0].scriptPubKey = CScript() << OP_0 << ToByteVector(hash);
+
+        CONFIRM(std::vector<CMutableTransaction>({case2A}));
+
+        auto case2B = GetBoring();
+        case2B.vin[0].prevout = COutPoint(case2A.GetHash(), 0);
+        case2B.vin[0].scriptSig = CScript();
+        case2B.vin[0].scriptWitness.stack.push_back(ToByteVector(case2B.GetHash()));
+        case2B.vin[0].scriptWitness.stack.push_back(vchWit);
+
+        CONFIRM(std::vector<CMutableTransaction>({case2B}));
+    }
+
+    {
+        BOOST_TEST_MESSAGE("Case 3: Script checks for UTXO which did exist in a "
+                "prior block, but was // spent // (FALSE)");
+        auto case3 = GetBoring();
+        case3.vin[0].scriptSig = CScript() << ToByteVector(n->GetHash()) << OP_UTXOEXISTS << OP_NOT;
+        CONFIRM(std::vector<CMutableTransaction>({case3}));
+    }
+
+    {
+        BOOST_TEST_MESSAGE("Case 4: Script checks existence of Input UTXO in "
+                "self transaction (FALSE)");
+        //
+        auto case4 = GetBoring();
+        auto vch = ToByteVector(case4.vin[0].prevout.hash);
+        vch.push_back(case4.vin[0].prevout.n);
+        case4.vin[0].scriptSig = CScript() <<  vch << OP_UTXOEXISTS << OP_NOT;
+        CONFIRM(std::vector<CMutableTransaction>({case4}));
+    }
+
+
+    {
+        BOOST_TEST_MESSAGE("Case 5: Script checks for UTXO which was created in "
+                "this block, at an earlier sequence in the block (txindex 0) "
+                "(TRUE)");
+        auto case5A = GetBoring();
+        auto case5B = GetBoring();
+        case5B.vin[0].scriptSig = CScript() << ToByteVector(case5A.GetHash()) << OP_UTXOEXISTS;
+        CONFIRM(std::vector<CMutableTransaction>({case5A, case5B}));
+    }
+
+    {
+        BOOST_TEST_MESSAGE("Case 6: Script checks for UTXO which was created in"
+                "this block, at a later sequence in the block (txindex 0)"
+                "(FALSE)");
+        auto case6 = GetBoring();
+        case6.vout[0].scriptPubKey = CScript() << OP_TRUE;
+        auto case7 = GetBoring();
+        case6.vin[0].scriptSig << ToByteVector(case7.GetHash()) << OP_UTXOEXISTS << OP_NOT;
+
+        CONFIRM(std::vector<CMutableTransaction>({case6, case7}));
+    }
+
+    {
+        BOOST_TEST_MESSAGE("Case 7: Script checks for UTXO which was created in "
+                "this block, at an earlier sequence in the block (txindex max) "
+                "(TRUE)");
+        auto case8A = GetBoring();
+        case8A.vout.resize(10, case8A.vout.back());
+        auto case8B = GetBoring();
+        auto vch =ToByteVector(case8A.GetHash());
+        vch.push_back(9);
+        case8B.vin[0].scriptSig << vch << OP_UTXOEXISTS;
+
+
+        CONFIRM(std::vector<CMutableTransaction>({case8A, case8B}));
+    }
+
+    {
+        BOOST_TEST_MESSAGE("Case 8: Script checks for UTXO which was created in "
+                "this block, at an later sequence in the block (txindex max) "
+                "(FALSE)");
+        auto case9A = GetBoring();
+        case9A.vout.resize(10, case9A.vout.back());
+        case9A.vout.back().scriptPubKey = CScript() << OP_TRUE;
+        auto case9B = GetBoring();
+        auto vch = ToByteVector(case9A.GetHash());
+        vch.push_back(case9A.vout.size() -1);
+        case9B.vin[0].scriptSig <<  vch << OP_UTXOEXISTS << OP_NOT;
+
+        // Order should be B then A here!
+        CONFIRM(std::vector<CMutableTransaction>({case9B, case9A}));
+    }
+
+
+    {
+        BOOST_TEST_MESSAGE("Case 9: Script checks non existence of UTXO which "
+                "was created in this block, at an earlier sequence, but was "
+                "spent before this script. (FALSE)");
+        auto case11A = GetBoring();
+        case11A.vout[0].scriptPubKey = CScript() << OP_TRUE;
+        auto spend11A = GetBoring();
+        spend11A.vin[0].prevout = COutPoint(case11A.GetHash(), 0);
+
+        auto case11B = GetBoring();
+        case11B.vin[0].scriptSig << ToByteVector(case11A.GetHash()) << OP_UTXOEXISTS << OP_NOT;
+
+        CONFIRM(std::vector<CMutableTransaction>({case11A, spend11A, case11B}));
+    }
+}
 
 BOOST_AUTO_TEST_SUITE_END()
