@@ -123,6 +123,10 @@ TestChain100Setup::CreateAndProcessBlock(const std::vector<CMutableTransaction>&
     block.vtx.resize(1);
     BOOST_FOREACH(const CMutableTransaction& tx, txns)
         block.vtx.push_back(MakeTransactionRef(tx));
+    CMutableTransaction tx(*block.vtx[0]);
+    tx.vout.resize(1);
+    block.vtx[0] = MakeTransactionRef(std::move(tx));
+    GenerateCoinbaseCommitment(block, chainActive.Tip(), chainparams.GetConsensus());
     // IncrementExtraNonce creates a valid coinbase and merkleRoot
     unsigned int extraNonce = 0;
     IncrementExtraNonce(&block, chainActive.Tip(), extraNonce);
