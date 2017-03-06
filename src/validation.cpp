@@ -1874,21 +1874,15 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
     {
         uint32_t sequence = 0;
         for (const auto& tx : block.vtx) {
-            uint256 txid = tx->GetHash();
+            const uint256 txid = tx->GetHash();
             create_map[txid].first = sequence;
             create_map[txid].second = tx->vout.size();
+            bool skipFirst = tx->IsCoinBase();
             for (auto& vin : tx->vin) {
-                const CCoins* coins = view.AccessCoins(vin.prevout.hash);
-                if (coins && !coins->IsAvailable(vin.prevout.n)) {
+                if (skipFirst)
+                    skipFirst = false;
+                else
                     spend_map[vin.prevout.hash][vin.prevout.n] = sequence;
-                } else {
-                    // Check if we created it locally
-                    auto x = create_map.find(vin.prevout.hash);
-                    if (x != create_map.end() && vin.prevout.n < x->second.second)
-                        spend_map[vin.prevout.hash][vin.prevout.n] = sequence;
-                }
-                // Otherwise, we should get it from the CCoinsViewCache at runtime. Note, for correctness, we must check
-                // outpointInterval source first (as the block can evaluate scriptchecks out of order).
             }
             ++sequence;
         }

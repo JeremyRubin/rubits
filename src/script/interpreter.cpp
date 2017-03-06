@@ -581,7 +581,6 @@ bool EvalScript(vector<vector<unsigned char> >& stack, const CScript& script, un
                     bool res = (*ScriptInputLookup::Get())(outpoint, checker.GetSequenceInBlock());
                     mlimit.allocate_for(res ? vchTrue : vchFalse);
                     stack.push_back(res ? vchTrue : vchFalse);
-                    break;
                 }
                 break;
                 case OP_NOP1:
